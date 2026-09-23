@@ -9,8 +9,8 @@ from aiogram.types import Message
 # =============================================
 # SOZLAMALAR - shu yerga o'z tokenlaringizni kiriting
 # =============================================
-BOT_TOKEN = "8959452349:AAF7PDc0i_PxrHUIqVLwMsuOehmfMw9Pas0"       # @BotFather dan oling
-AUDD_API_KEY = "ae4e38c7aca7c8d3f2cb3a7fcc427870" # https://audd.io dan oling (bepul plan bor)
+BOT_TOKEN = os.getenv("BOT_TOKEN")        # @BotFather dan oling
+AUDD_API_KEY = os.getenv("AUDD_API_KEY") # https://audd.io dan oling (bepul plan bor)
 # =============================================
 
 bot = Bot(token=BOT_TOKEN)
