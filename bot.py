@@ -181,7 +181,7 @@ async def download_video(message: Message, url: str):
                         input_file = FSInputFile(video_file)
                         await message.answer_video(
                             input_file,
-                            caption="✅ Mana videongiz! 🎬\n\n🤖 @KuyNavoBot"
+                            caption="✅ Mana videongiz! 🎬\n\n🤖 @navogoybot"
                         )
                     else:
                         await message.answer("😕 Video hajmi juda katta (50MB dan oshiq)!")
