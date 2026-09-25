@@ -474,7 +474,7 @@ async def download_video(message: Message, url: str):
                     await processing_msg.delete()
                     if os.path.getsize(video_file) < 50 * 1024 * 1024:
                         input_file = FSInputFile(video_file)
-                        await message.answer_video(input_file, caption="✅ Mana videongiz! 🎬")
+                        await message.answer_video(input_file, caption="✅ Mana videongiz! 🎬\n\n🤖 @navogoybot")
                     else:
                         await message.answer("😕 Video hajmi juda katta!")
                 else:
