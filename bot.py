@@ -6,12 +6,8 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
-# =============================================
-# SOZLAMALAR - shu yerga o'z tokenlaringizni kiriting
-# =============================================
-BOT_TOKEN = os.getenv("BOT_TOKEN")        # @BotFather dan oling
-AUDD_API_KEY = os.getenv("AUDD_API_KEY") # https://audd.io dan oling (bepul plan bor)
-# =============================================
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+AUDD_API_KEY = os.getenv("AUDD_API_KEY")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -22,11 +18,12 @@ dp = Dispatcher()
 async def cmd_start(message: Message):
     await message.answer(
         "🎵 *Kuy Navo Bot*'ga xush kelibsiz!\n\n"
-        "Men sizga musiqani tanishga yordam beraman.\n\n"
-        "📤 *Qanday foydalanish:*\n"
-        "• Ovoz xabar yuboring (mikrofon orqali)\n"
-        "• Yoki audio/musiqa fayli yuboring\n\n"
-        "Men kuy nomini, artistni va boshqa ma'lumotlarni topaman! 🎶",
+        "📤 *Nima yuborish mumkin:*\n"
+        "• 🎤 Ovoz xabar — kuyni taniydi\n"
+        "• 🎵 Audio fayl — kuyni taniydi\n"
+        "• 🔗 Instagram/TikTok/YouTube havolasi — video yuklab beradi\n"
+        "• 🔍 Kuy nomi yozing — qidiradi\n\n"
+        "Sinab ko'ring! 🚀",
         parse_mode="Markdown"
     )
 
@@ -43,59 +40,48 @@ async def handle_audio(message: Message):
     await recognize_music(message, message.audio.file_id)
 
 
-# Video xabarlarni qabul qilish (ba'zan foydalanuvchilar video yuboradi)
+# Video note
 @dp.message(F.video_note)
 async def handle_video_note(message: Message):
     await recognize_music(message, message.video_note.file_id)
 
 
 async def recognize_music(message: Message, file_id: str):
-    """Asosiy funksiya: faylni yuklab, AudD orqali taniydi"""
-    
     processing_msg = await message.answer("🔍 Kuy tanilmoqda... iltimos kuting!")
-    
     try:
-        # Faylni Telegram'dan yuklab olish
         file = await bot.get_file(file_id)
         file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
-        
-        # AudD API ga yuborish
+
         async with aiohttp.ClientSession() as session:
-            # URL orqali yuborish (faylni yuklamasdan)
             data = {
                 "url": file_url,
                 "return": "apple_music,spotify",
                 "api_token": AUDD_API_KEY
             }
-            
             async with session.post("https://api.audd.io/", data=data) as resp:
                 result = await resp.json()
-        
+
         await processing_msg.delete()
-        
-        # Natijani tahlil qilish
+
         if result.get("status") == "success" and result.get("result"):
             song = result["result"]
-            
             title = song.get("title", "Noma'lum")
             artist = song.get("artist", "Noma'lum")
             album = song.get("album", "Noma'lum")
             release_date = song.get("release_date", "Noma'lum")
-            
-            # Spotify linki
+
             spotify_link = ""
             if song.get("spotify"):
                 spotify_url = song["spotify"].get("external_urls", {}).get("spotify", "")
                 if spotify_url:
                     spotify_link = f"\n🎧 [Spotify'da tinglash]({spotify_url})"
-            
-            # Apple Music linki
+
             apple_link = ""
             if song.get("apple_music"):
                 apple_url = song["apple_music"].get("url", "")
                 if apple_url:
                     apple_link = f"\n🍎 [Apple Music'da tinglash]({apple_url})"
-            
+
             response_text = (
                 f"✅ *Kuy topildi!*\n\n"
                 f"🎵 *Nomi:* {title}\n"
@@ -105,36 +91,111 @@ async def recognize_music(message: Message, file_id: str):
                 f"{spotify_link}"
                 f"{apple_link}"
             )
-            
             await message.answer(response_text, parse_mode="Markdown")
-        
         else:
             await message.answer(
                 "😕 *Kuy aniqlanmadi*\n\n"
                 "Iltimos:\n"
-                "• Ovozroq yozib yuboring (kamida 5-10 soniya)\n"
-                "• Fon shovqini kamaytiring\n"
-                "• Boshqa bir parcha yuboring",
+                "• Kamida 5-10 soniya yozib yuboring\n"
+                "• Fon shovqinini kamaytiring",
                 parse_mode="Markdown"
             )
-    
+    except Exception as e:
+        await processing_msg.delete()
+        await message.answer(f"❌ Xatolik: {str(e)}")
+
+
+# Matn yozilganda — kuy qidirish yoki link tekshirish
+@dp.message(F.text)
+async def handle_text(message: Message):
+    text = message.text.strip()
+
+    # Link tekshirish
+    if any(domain in text for domain in ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "twitter.com", "x.com", "facebook.com"]):
+        await download_video(message, text)
+    else:
+        # Kuy nomi bo'yicha qidirish
+        await search_music(message, text)
+
+
+async def search_music(message: Message, query: str):
+    processing_msg = await message.answer(f"🔍 *{query}* qidirilmoqda...")
+    try:
+        async with aiohttp.ClientSession() as session:
+            data = {
+                "q": query,
+                "return": "apple_music,spotify",
+                "api_token": AUDD_API_KEY
+            }
+            async with session.post("https://api.audd.io/findLyrics/", data=data) as resp:
+                result = await resp.json()
+
+        await processing_msg.delete()
+
+        if result.get("status") == "success" and result.get("result"):
+            songs = result["result"][:3]
+            response = "🎵 *Topilgan kuylar:*\n\n"
+            for i, song in enumerate(songs, 1):
+                title = song.get("title", "Noma'lum")
+                artist = song.get("artist", "Noma'lum")
+                response += f"{i}. 🎤 *{artist}* — {title}\n"
+            await message.answer(response, parse_mode="Markdown")
+        else:
+            await message.answer(
+                "😕 Kuy topilmadi\n\n"
+                "💡 Ovoz xabar yuboring yoki aniqroq yozing!"
+            )
+    except Exception as e:
+        await processing_msg.delete()
+        await message.answer(f"❌ Xatolik: {str(e)}")
+
+
+async def download_video(message: Message, url: str):
+    processing_msg = await message.answer("⬇️ Video yuklanmoqda... iltimos kuting!")
+    try:
+        async with aiohttp.ClientSession() as session:
+            # RapidAPI yoki boshqa servis orqali
+            api_url = "https://social-media-video-downloader.p.rapidapi.com/smvd/get/all"
+            headers = {
+                "x-rapidapi-host": "social-media-video-downloader.p.rapidapi.com",
+                "x-rapidapi-key": os.getenv("RAPIDAPI_KEY", "")
+            }
+            params = {"url": url}
+            async with session.get(api_url, headers=headers, params=params) as resp:
+                result = await resp.json()
+
+        await processing_msg.delete()
+
+        if result.get("success") and result.get("links"):
+            links = result["links"]
+            video_url = None
+            for link in links:
+                if link.get("quality") in ["hd", "sd", "720", "480", "360"]:
+                    video_url = link.get("link")
+                    break
+            if not video_url and links:
+                video_url = links[0].get("link")
+
+            if video_url:
+                await message.answer_video(
+                    video_url,
+                    caption="✅ Mana videongiz! 🎬\n\n🤖 @KuyNavoBot"
+                )
+            else:
+                await message.answer("😕 Video havolasi topilmadi!")
+        else:
+            await message.answer(
+                "😕 *Video yuklab olinmadi*\n\n"
+                "Sabab: havola noto'g'ri yoki private post bo'lishi mumkin",
+                parse_mode="Markdown"
+            )
     except Exception as e:
         await processing_msg.delete()
         await message.answer(
-            f"❌ Xatolik yuz berdi. Iltimos qayta urinib ko'ring.\n\n"
-            f"_Xato: {str(e)}_",
+            "😕 *Video yuklab olinmadi*\n\n"
+            "💡 Maslahat: Havola to'g'ri ekanligini tekshiring!",
             parse_mode="Markdown"
         )
-
-
-# Boshqa xabarlar
-@dp.message()
-async def handle_other(message: Message):
-    await message.answer(
-        "🎵 Menga ovoz xabar yoki audio fayl yuboring!\n"
-        "Men kuyni tanib, sizga ma'lumot beraman.\n\n"
-        "Yordam uchun: /start"
-    )
 
 
 async def main():
