@@ -1,10 +1,11 @@
 import os
 import asyncio
 import aiohttp
-import aiofiles
+import subprocess
+import tempfile
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
-from aiogram.types import Message
+from aiogram.types import Message, FSInputFile
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 AUDD_API_KEY = os.getenv("AUDD_API_KEY")
@@ -13,7 +14,6 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 
-# /start komandasi
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     await message.answer(
@@ -28,19 +28,16 @@ async def cmd_start(message: Message):
     )
 
 
-# Ovoz xabarlarni qabul qilish
 @dp.message(F.voice)
 async def handle_voice(message: Message):
     await recognize_music(message, message.voice.file_id)
 
 
-# Audio fayllarni qabul qilish
 @dp.message(F.audio)
 async def handle_audio(message: Message):
     await recognize_music(message, message.audio.file_id)
 
 
-# Video note
 @dp.message(F.video_note)
 async def handle_video_note(message: Message):
     await recognize_music(message, message.video_note.file_id)
@@ -95,7 +92,6 @@ async def recognize_music(message: Message, file_id: str):
         else:
             await message.answer(
                 "😕 *Kuy aniqlanmadi*\n\n"
-                "Iltimos:\n"
                 "• Kamida 5-10 soniya yozib yuboring\n"
                 "• Fon shovqinini kamaytiring",
                 parse_mode="Markdown"
@@ -105,16 +101,14 @@ async def recognize_music(message: Message, file_id: str):
         await message.answer(f"❌ Xatolik: {str(e)}")
 
 
-# Matn yozilganda — kuy qidirish yoki link tekshirish
 @dp.message(F.text)
 async def handle_text(message: Message):
     text = message.text.strip()
 
-    # Link tekshirish
-    if any(domain in text for domain in ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "twitter.com", "x.com", "facebook.com"]):
+    video_domains = ["instagram.com", "tiktok.com", "youtube.com", "youtu.be", "twitter.com", "x.com", "facebook.com", "t.me"]
+    if any(domain in text for domain in video_domains):
         await download_video(message, text)
     else:
-        # Kuy nomi bo'yicha qidirish
         await search_music(message, text)
 
 
@@ -141,59 +135,87 @@ async def search_music(message: Message, query: str):
                 response += f"{i}. 🎤 *{artist}* — {title}\n"
             await message.answer(response, parse_mode="Markdown")
         else:
-            await message.answer(
-                "😕 Kuy topilmadi\n\n"
-                "💡 Ovoz xabar yuboring yoki aniqroq yozing!"
-            )
+            await message.answer("😕 Kuy topilmadi\n\n💡 Ovoz xabar yuboring!")
     except Exception as e:
         await processing_msg.delete()
         await message.answer(f"❌ Xatolik: {str(e)}")
 
 
 async def download_video(message: Message, url: str):
-    processing_msg = await message.answer("⬇️ Video yuklanmoqda... iltimos kuting!")
+    processing_msg = await message.answer("⬇️ Video yuklanmoqda... biroz kuting! (1-2 daqiqa)")
+    
     try:
-        async with aiohttp.ClientSession() as session:
-            # RapidAPI yoki boshqa servis orqali
-            api_url = "https://social-media-video-downloader.p.rapidapi.com/smvd/get/all"
-            headers = {
-                "x-rapidapi-host": "social-media-video-downloader.p.rapidapi.com",
-                "x-rapidapi-key": os.getenv("RAPIDAPI_KEY", "")
-            }
-            params = {"url": url}
-            async with session.get(api_url, headers=headers, params=params) as resp:
-                result = await resp.json()
-
-        await processing_msg.delete()
-
-        if result.get("success") and result.get("links"):
-            links = result["links"]
-            video_url = None
-            for link in links:
-                if link.get("quality") in ["hd", "sd", "720", "480", "360"]:
-                    video_url = link.get("link")
-                    break
-            if not video_url and links:
-                video_url = links[0].get("link")
-
-            if video_url:
-                await message.answer_video(
-                    video_url,
-                    caption="✅ Mana videongiz! 🎬\n\n🤖 @KuyNavoBot"
-                )
-            else:
-                await message.answer("😕 Video havolasi topilmadi!")
-        else:
-            await message.answer(
-                "😕 *Video yuklab olinmadi*\n\n"
-                "Sabab: havola noto'g'ri yoki private post bo'lishi mumkin",
-                parse_mode="Markdown"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = os.path.join(tmpdir, "video.%(ext)s")
+            
+            cmd = [
+                "yt-dlp",
+                "--no-playlist",
+                "-f", "best[filesize<50M]/best",
+                "--max-filesize", "50m",
+                "-o", output_path,
+                "--no-warnings",
+                url
+            ]
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
-    except Exception as e:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+            
+            if process.returncode == 0:
+                # Faylni top
+                video_file = None
+                for f in os.listdir(tmpdir):
+                    if f.startswith("video"):
+                        video_file = os.path.join(tmpdir, f)
+                        break
+                
+                if video_file and os.path.exists(video_file):
+                    await processing_msg.delete()
+                    file_size = os.path.getsize(video_file)
+                    
+                    if file_size < 50 * 1024 * 1024:  # 50MB
+                        input_file = FSInputFile(video_file)
+                        await message.answer_video(
+                            input_file,
+                            caption="✅ Mana videongiz! 🎬\n\n🤖 @KuyNavoBot"
+                        )
+                    else:
+                        await message.answer("😕 Video hajmi juda katta (50MB dan oshiq)!")
+                else:
+                    await processing_msg.delete()
+                    await message.answer("😕 Video yuklab olinmadi!")
+            else:
+                await processing_msg.delete()
+                error = stderr.decode()
+                if "Private" in error or "Login" in error:
+                    await message.answer(
+                        "🔒 *Bu post private!*\n\n"
+                        "Faqat ochiq (public) postlarni yuklab olish mumkin.",
+                        parse_mode="Markdown"
+                    )
+                else:
+                    await message.answer(
+                        "😕 *Video yuklab olinmadi*\n\n"
+                        "• Havola to'g'ri ekanligini tekshiring\n"
+                        "• Post public bo'lishi kerak",
+                        parse_mode="Markdown"
+                    )
+    except asyncio.TimeoutError:
         await processing_msg.delete()
+        await message.answer("⏰ Vaqt tugadi! Video juda katta yoki sekin internet.")
+    except Exception as e:
+        try:
+            await processing_msg.delete()
+        except:
+            pass
         await message.answer(
-            "😕 *Video yuklab olinmadi*\n\n"
-            "💡 Maslahat: Havola to'g'ri ekanligini tekshiring!",
+            "😕 *Xatolik yuz berdi*\n\n"
+            "• Havola to'g'ri ekanligini tekshiring\n"
+            "• Post public bo'lishi kerak",
             parse_mode="Markdown"
         )
 
