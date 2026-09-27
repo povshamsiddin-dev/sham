@@ -13,16 +13,143 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 AUDD_API_KEY = os.getenv("AUDD_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))  # Railway Variables ga admin ID yozing
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")  # masalan: @mychannel. Bo'sh bo'lsa majburiy obuna o'chiq.
+
+if not BOT_TOKEN:
+    raise RuntimeError("❌ BOT_TOKEN topilmadi! Railway → Variables bo'limida BOT_TOKEN ni tekshiring.")
+if not DATABASE_URL:
+    raise RuntimeError("❌ DATABASE_URL topilmadi! Railway'da Postgres qo'shilganini tekshiring.")
+
+# Railway ba'zan "postgres://" beradi, asyncpg esa "postgresql://" talab qiladi
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 db_pool = None
 
 
+# ===================== TILLAR (i18n) =====================
+TEXTS = {
+    "uz": {
+        "welcome": "🎵 *Kuy Navo Bot*'ga xush kelibsiz, {name}!\n\n📤 *Nima yuborish mumkin:*\n• 🎤 Ovoz xabar — kuyni taniydi\n• 🎵 Audio fayl — kuyni taniydi\n• 🎬 Video — kuyni taniydi\n• 🔗 Instagram/TikTok/YouTube havolasi — video yuklab beradi\n• 🔍 Kuy nomi yozing — qidiradi\n\nTilni istalgan vaqt /til orqali o'zgartirishingiz mumkin.\n\nSinab ko'ring! 🚀",
+        "bot_inactive": "🔴 Bot hozir texnik ishlar uchun vaqtincha to'xtatilgan!",
+        "blocked": "🚫 Siz bloklangansiz!",
+        "not_subscribed": "❌ Botdan foydalanish uchun avval quyidagi kanalga obuna bo'ling, so'ng \"✅ Tekshirish\" tugmasini bosing:",
+        "check_sub_btn": "✅ Tekshirish",
+        "go_channel_btn": "📢 Kanalga o'tish",
+        "sub_ok": "✅ Obuna tasdiqlandi! Endi botdan foydalanishingiz mumkin.\n\n/start ni bosing.",
+        "sub_fail": "❌ Siz hali kanalga obuna bo'lmadingiz!",
+        "choose_lang": "🌐 Tilni tanlang:",
+        "lang_set": "✅ Til o'zbek tiliga o'zgartirildi!",
+        "searching_voice": "🔍 Kuy tanilmoqda... iltimos kuting!",
+        "not_found_voice": "😕 Kuy aniqlanmadi\n\n• Kamida 5-10 soniya yuboring",
+        "found_title": "✅ *Kuy topildi!*",
+        "label_name": "Nomi", "label_artist": "Artist", "label_album": "Albom", "label_release": "Chiqarilgan",
+        "listen_spotify": "🎧 [Spotify'da tinglash]({url})",
+        "listen_apple": "🍎 [Apple Music'da tinglash]({url})",
+        "searching_text": "🔍 *{q}* qidirilmoqda...",
+        "found_list_title": "🎵 *Topilgan kuylar:*\n\n",
+        "not_found_text": "😕 Kuy topilmadi\n\n💡 Ovoz xabar yuboring!",
+        "error": "❌ Xatolik: {err}",
+        "video_downloading": "⬇️ Video yuklanmoqda... biroz kuting!",
+        "video_ok_caption": "✅ Mana videongiz! 🎬",
+        "video_too_big": "😕 Video hajmi juda katta!",
+        "video_fail": "😕 Video yuklab olinmadi!",
+        "video_private": "🔒 Bu post private! Faqat ochiq postlarni yuklab olish mumkin.",
+        "video_fail_hint": "😕 Video yuklab olinmadi!\n\n• Havola to'g'ri ekanligini tekshiring\n• Post public bo'lishi kerak",
+        "video_timeout": "⏰ Vaqt tugadi! Video juda katta.",
+        "unsupported": "🤔 Bu turdagi faylni qo'llab-quvvatlamayman.\n\nMenga *ovoz xabar*, *audio*, *video* yoki *qo'shiq nomi* yuboring 🎵",
+        "feedback_thanks": "Rahmat! 🙏",
+    },
+    "ru": {
+        "welcome": "🎵 Добро пожаловать в *Kuy Navo Bot*, {name}!\n\n📤 *Что можно отправить:*\n• 🎤 Голосовое сообщение — распознает песню\n• 🎵 Аудиофайл — распознает песню\n• 🎬 Видео — распознает песню\n• 🔗 Ссылка Instagram/TikTok/YouTube — скачает видео\n• 🔍 Напишите название песни — найдёт её\n\nЯзык можно изменить командой /til.\n\nПопробуйте! 🚀",
+        "bot_inactive": "🔴 Бот временно на технических работах!",
+        "blocked": "🚫 Вы заблокированы!",
+        "not_subscribed": "❌ Чтобы пользоваться ботом, сначала подпишитесь на канал, затем нажмите \"✅ Проверить\":",
+        "check_sub_btn": "✅ Проверить",
+        "go_channel_btn": "📢 Перейти в канал",
+        "sub_ok": "✅ Подписка подтверждена! Теперь можно пользоваться ботом.\n\nНажмите /start.",
+        "sub_fail": "❌ Вы ещё не подписались на канал!",
+        "choose_lang": "🌐 Выберите язык:",
+        "lang_set": "✅ Язык изменён на русский!",
+        "searching_voice": "🔍 Распознаю песню... подождите!",
+        "not_found_voice": "😕 Песня не распознана\n\n• Отправьте минимум 5-10 секунд",
+        "found_title": "✅ *Песня найдена!*",
+        "label_name": "Название", "label_artist": "Исполнитель", "label_album": "Альбом", "label_release": "Дата выхода",
+        "listen_spotify": "🎧 [Слушать в Spotify]({url})",
+        "listen_apple": "🍎 [Слушать в Apple Music]({url})",
+        "searching_text": "🔍 Ищу *{q}*...",
+        "found_list_title": "🎵 *Найденные песни:*\n\n",
+        "not_found_text": "😕 Песня не найдена\n\n💡 Отправьте голосовое сообщение!",
+        "error": "❌ Ошибка: {err}",
+        "video_downloading": "⬇️ Загружаю видео... подождите!",
+        "video_ok_caption": "✅ Вот ваше видео! 🎬",
+        "video_too_big": "😕 Видео слишком большое!",
+        "video_fail": "😕 Не удалось загрузить видео!",
+        "video_private": "🔒 Этот пост приватный! Можно скачивать только публичные посты.",
+        "video_fail_hint": "😕 Не удалось загрузить видео!\n\n• Проверьте правильность ссылки\n• Пост должен быть публичным",
+        "video_timeout": "⏰ Время истекло! Видео слишком большое.",
+        "unsupported": "🤔 Этот тип файла не поддерживается.\n\nОтправьте *голосовое сообщение*, *аудио*, *видео* или *название песни* 🎵",
+        "feedback_thanks": "Спасибо! 🙏",
+    },
+    "en": {
+        "welcome": "🎵 Welcome to *Kuy Navo Bot*, {name}!\n\n📤 *What you can send:*\n• 🎤 Voice message — recognizes the song\n• 🎵 Audio file — recognizes the song\n• 🎬 Video — recognizes the song\n• 🔗 Instagram/TikTok/YouTube link — downloads the video\n• 🔍 Type a song name — searches for it\n\nChange language anytime with /til.\n\nGive it a try! 🚀",
+        "bot_inactive": "🔴 The bot is temporarily down for maintenance!",
+        "blocked": "🚫 You are blocked!",
+        "not_subscribed": "❌ To use the bot, please subscribe to the channel below, then press \"✅ Check\":",
+        "check_sub_btn": "✅ Check",
+        "go_channel_btn": "📢 Open channel",
+        "sub_ok": "✅ Subscription confirmed! You can now use the bot.\n\nPress /start.",
+        "sub_fail": "❌ You haven't subscribed to the channel yet!",
+        "choose_lang": "🌐 Choose a language:",
+        "lang_set": "✅ Language changed to English!",
+        "searching_voice": "🔍 Recognizing the song... please wait!",
+        "not_found_voice": "😕 Song not recognized\n\n• Send at least 5-10 seconds",
+        "found_title": "✅ *Song found!*",
+        "label_name": "Title", "label_artist": "Artist", "label_album": "Album", "label_release": "Released",
+        "listen_spotify": "🎧 [Listen on Spotify]({url})",
+        "listen_apple": "🍎 [Listen on Apple Music]({url})",
+        "searching_text": "🔍 Searching *{q}*...",
+        "found_list_title": "🎵 *Songs found:*\n\n",
+        "not_found_text": "😕 Song not found\n\n💡 Try sending a voice message!",
+        "error": "❌ Error: {err}",
+        "video_downloading": "⬇️ Downloading video... please wait!",
+        "video_ok_caption": "✅ Here's your video! 🎬",
+        "video_too_big": "😕 Video is too large!",
+        "video_fail": "😕 Could not download the video!",
+        "video_private": "🔒 This post is private! Only public posts can be downloaded.",
+        "video_fail_hint": "😕 Could not download the video!\n\n• Check that the link is correct\n• The post must be public",
+        "video_timeout": "⏰ Timed out! Video is too large.",
+        "unsupported": "🤔 This file type isn't supported.\n\nSend me a *voice message*, *audio*, *video*, or a *song name* 🎵",
+        "feedback_thanks": "Thanks! 🙏",
+    },
+}
+
+
+def t(key: str, lang: str, **kwargs) -> str:
+    lang = lang if lang in TEXTS else "uz"
+    template = TEXTS[lang].get(key, TEXTS["uz"].get(key, key))
+    return template.format(**kwargs) if kwargs else template
+
+
+def escape_md(text: str) -> str:
+    """Telegram 'Markdown' (legacy) rejasi buzilmasligi uchun maxsus belgilarni ekranlaydi."""
+    if not text:
+        return text
+    for ch in ("_", "*", "[", "`"):
+        text = text.replace(ch, "\\" + ch)
+    return text
+
+
 # ===================== DATABASE =====================
 async def init_db():
     global db_pool
-    db_pool = await asyncpg.create_pool(DATABASE_URL)
+    try:
+        db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+    except Exception as e:
+        print(f"[DB ULANISH XATOSI]: {e}")
+        raise
     async with db_pool.acquire() as conn:
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
@@ -34,10 +161,19 @@ async def init_db():
                 requests_count INT DEFAULT 0
             )
         """)
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'uz'")
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS bot_settings (
                 key TEXT PRIMARY KEY,
                 value TEXT
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS feedback (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                reaction TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
             )
         """)
         # Bot yoqilgan holat
@@ -58,10 +194,13 @@ async def add_user(user_id: int, username: str, full_name: str):
 
 
 async def increment_requests(user_id: int):
-    async with db_pool.acquire() as conn:
-        await conn.execute("""
-            UPDATE users SET requests_count = requests_count + 1 WHERE user_id = $1
-        """, user_id)
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE users SET requests_count = requests_count + 1 WHERE user_id = $1
+            """, user_id)
+    except Exception as e:
+        print(f"[DB xato - increment_requests]: {e}")
 
 
 async def is_bot_active():
@@ -76,6 +215,29 @@ async def is_user_blocked(user_id: int):
         return row['is_blocked'] if row else False
 
 
+async def get_user_language(user_id: int) -> str:
+    try:
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT language FROM users WHERE user_id = $1", user_id)
+            return row["language"] if row and row["language"] else "uz"
+    except Exception as e:
+        print(f"[DB xato - get_user_language]: {e}")
+        return "uz"
+
+
+async def set_user_language(user_id: int, lang: str):
+    async with db_pool.acquire() as conn:
+        await conn.execute("UPDATE users SET language = $1 WHERE user_id = $2", lang, user_id)
+
+
+async def add_feedback(user_id: int, reaction: str):
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute("INSERT INTO feedback (user_id, reaction) VALUES ($1, $2)", user_id, reaction)
+    except Exception as e:
+        print(f"[DB xato - add_feedback]: {e}")
+
+
 async def get_stats():
     async with db_pool.acquire() as conn:
         total = await conn.fetchval("SELECT COUNT(*) FROM users")
@@ -84,17 +246,101 @@ async def get_stats():
         today = await conn.fetchval(
             "SELECT COUNT(*) FROM users WHERE joined_at::date = CURRENT_DATE"
         )
+        likes = await conn.fetchval("SELECT COUNT(*) FROM feedback WHERE reaction = 'like'")
+        dislikes = await conn.fetchval("SELECT COUNT(*) FROM feedback WHERE reaction = 'dislike'")
         return {
             "total": total,
             "blocked": blocked,
             "total_requests": total_requests or 0,
-            "today": today
+            "today": today,
+            "likes": likes or 0,
+            "dislikes": dislikes or 0,
         }
 
 
 async def get_all_users():
     async with db_pool.acquire() as conn:
         return await conn.fetch("SELECT user_id FROM users WHERE is_blocked = FALSE")
+
+
+# ===================== OBUNA (majburiy a'zolik) =====================
+async def is_subscribed(user_id: int) -> bool:
+    if not CHANNEL_USERNAME:
+        return True
+    try:
+        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        return member.status in ("member", "administrator", "creator")
+    except Exception as e:
+        print(f"[Obuna tekshirish xato]: {e}")
+        return True  # xato bo'lsa (masalan bot admin emas) botni bloklab qo'ymaymiz
+
+
+def subscribe_keyboard(lang: str):
+    builder = InlineKeyboardBuilder()
+    if CHANNEL_USERNAME:
+        builder.row(InlineKeyboardButton(
+            text=t("go_channel_btn", lang),
+            url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}"
+        ))
+    builder.row(InlineKeyboardButton(text=t("check_sub_btn", lang), callback_data="check_sub"))
+    return builder.as_markup()
+
+
+@dp.callback_query(F.data == "check_sub")
+async def check_sub_callback(callback: types.CallbackQuery):
+    lang = await get_user_language(callback.from_user.id)
+    if await is_subscribed(callback.from_user.id):
+        await callback.message.edit_text(t("sub_ok", lang))
+        await callback.answer()
+    else:
+        await callback.answer(t("sub_fail", lang), show_alert=True)
+
+
+# ===================== TIL TANLASH =====================
+def lang_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="🇺🇿 O'zbek", callback_data="lang_uz"),
+        InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_ru"),
+        InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_en"),
+    )
+    return builder.as_markup()
+
+
+@dp.message(Command("til"))
+async def cmd_language(message: Message):
+    lang = await get_user_language(message.from_user.id)
+    await message.answer(t("choose_lang", lang), reply_markup=lang_keyboard())
+
+
+@dp.callback_query(F.data.startswith("lang_"))
+async def set_language_callback(callback: types.CallbackQuery):
+    lang = callback.data.split("_")[1]
+    await set_user_language(callback.from_user.id, lang)
+    await callback.message.edit_text(t("lang_set", lang))
+    await callback.answer()
+
+
+# ===================== BAHOLASH (like/dislike) =====================
+def rating_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="👍", callback_data="fb_like"),
+        InlineKeyboardButton(text="👎", callback_data="fb_dislike"),
+    )
+    return builder.as_markup()
+
+
+@dp.callback_query(F.data.in_({"fb_like", "fb_dislike"}))
+async def feedback_callback(callback: types.CallbackQuery):
+    reaction = "like" if callback.data == "fb_like" else "dislike"
+    await add_feedback(callback.from_user.id, reaction)
+    lang = await get_user_language(callback.from_user.id)
+    await callback.answer(t("feedback_thanks", lang))
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
 
 
 # ===================== ADMIN PANEL =====================
@@ -139,6 +385,7 @@ async def show_stats(callback: types.CallbackQuery):
         f"🆕 Bugun qo'shilgan: *{stats['today']}*\n"
         f"🚫 Bloklangan: *{stats['blocked']}*\n"
         f"🔢 Jami so'rovlar: *{stats['total_requests']}*\n"
+        f"👍 Layklar: *{stats['likes']}* | 👎 Dislayklar: *{stats['dislikes']}*\n"
         f"🤖 Bot holati: {bot_status}"
     )
 
@@ -251,23 +498,33 @@ async def unblock_user_cmd(message: Message):
 
 
 # ===================== BOT FUNKSIYALARI =====================
-@dp.message(CommandStart())
-async def cmd_start(message: Message):
+async def check_user(message: Message):
     user = message.from_user
     await add_user(user.id, user.username, user.full_name)
+    lang = await get_user_language(user.id)
+
+    if await is_user_blocked(user.id):
+        await message.answer(t("blocked", lang))
+        return False
 
     if not await is_bot_active() and user.id != ADMIN_ID:
-        await message.answer("🔴 Bot hozir texnik ishlar uchun vaqtincha to'xtatilgan!")
-        return
+        await message.answer(t("bot_inactive", lang))
+        return False
 
+    if not await is_subscribed(user.id):
+        await message.answer(t("not_subscribed", lang), reply_markup=subscribe_keyboard(lang))
+        return False
+
+    return True
+
+
+@dp.message(CommandStart())
+async def cmd_start(message: Message):
+    if not await check_user(message):
+        return
+    lang = await get_user_language(message.from_user.id)
     await message.answer(
-        f"🎵 *Kuy Navo Bot*'ga xush kelibsiz, {user.first_name}!\n\n"
-        "📤 *Nima yuborish mumkin:*\n"
-        "• 🎤 Ovoz xabar — kuyni taniydi\n"
-        "• 🎵 Audio fayl — kuyni taniydi\n"
-        "• 🔗 Instagram/TikTok/YouTube havolasi — video yuklab beradi\n"
-        "• 🔍 Kuy nomi yozing — qidiradi\n\n"
-        "Sinab ko'ring! 🚀",
+        t("welcome", lang, name=message.from_user.first_name),
         parse_mode="Markdown"
     )
 
@@ -293,24 +550,25 @@ async def handle_video_note(message: Message):
     await recognize_music(message, message.video_note.file_id)
 
 
-async def check_user(message: Message):
-    user = message.from_user
-    await add_user(user.id, user.username, user.full_name)
+@dp.message(F.video)
+async def handle_video(message: Message):
+    if not await check_user(message):
+        return
+    await recognize_music(message, message.video.file_id)
 
-    if not await is_bot_active() and user.id != ADMIN_ID:
-        await message.answer("🔴 Bot hozir texnik ishlar uchun vaqtincha to'xtatilgan!")
-        return False
 
-    if await is_user_blocked(user.id):
-        await message.answer("🚫 Siz bloklangansiz!")
-        return False
-
-    return True
+@dp.message(F.photo | F.document | F.sticker | F.animation)
+async def handle_unsupported(message: Message):
+    if not await check_user(message):
+        return
+    lang = await get_user_language(message.from_user.id)
+    await message.answer(t("unsupported", lang), parse_mode="Markdown")
 
 
 async def recognize_music(message: Message, file_id: str):
+    lang = await get_user_language(message.from_user.id)
     await increment_requests(message.from_user.id)
-    processing_msg = await message.answer("🔍 Kuy tanilmoqda... iltimos kuting!")
+    processing_msg = await message.answer(t("searching_voice", lang))
     try:
         file = await bot.get_file(file_id)
         file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
@@ -328,40 +586,41 @@ async def recognize_music(message: Message, file_id: str):
 
         if result.get("status") == "success" and result.get("result"):
             song = result["result"]
-            title = song.get("title", "Noma'lum")
-            artist = song.get("artist", "Noma'lum")
-            album = song.get("album", "Noma'lum")
+            title = escape_md(song.get("title", "Noma'lum"))
+            artist = escape_md(song.get("artist", "Noma'lum"))
+            album = escape_md(song.get("album", "Noma'lum"))
             release_date = song.get("release_date", "Noma'lum")
 
             spotify_link = ""
             if song.get("spotify"):
                 spotify_url = song["spotify"].get("external_urls", {}).get("spotify", "")
                 if spotify_url:
-                    spotify_link = f"\n🎧 [Spotify'da tinglash]({spotify_url})"
+                    spotify_link = "\n" + t("listen_spotify", lang, url=spotify_url)
 
             apple_link = ""
             if song.get("apple_music"):
                 apple_url = song["apple_music"].get("url", "")
                 if apple_url:
-                    apple_link = f"\n🍎 [Apple Music'da tinglash]({apple_url})"
+                    apple_link = "\n" + t("listen_apple", lang, url=apple_url)
 
-            await message.answer(
-                f"✅ *Kuy topildi!*\n\n"
-                f"🎵 *Nomi:* {title}\n"
-                f"🎤 *Artist:* {artist}\n"
-                f"💿 *Albom:* {album}\n"
-                f"📅 *Chiqarilgan:* {release_date}"
-                f"{spotify_link}{apple_link}",
-                parse_mode="Markdown"
+            text = (
+                f"{t('found_title', lang)}\n\n"
+                f"🎵 *{t('label_name', lang)}:* {title}\n"
+                f"🎤 *{t('label_artist', lang)}:* {artist}\n"
+                f"💿 *{t('label_album', lang)}:* {album}\n"
+                f"📅 *{t('label_release', lang)}:* {release_date}"
+                f"{spotify_link}{apple_link}"
             )
+            await message.answer(text, parse_mode="Markdown", reply_markup=rating_keyboard())
         else:
-            await message.answer("😕 Kuy aniqlanmadi\n\n• Kamida 5-10 soniya yuboring")
+            await message.answer(t("not_found_voice", lang))
     except Exception as e:
         try:
             await processing_msg.delete()
         except:
             pass
-        await message.answer(f"❌ Xatolik: {str(e)}")
+        print(f"[recognize_music xato]: {e}")
+        await message.answer(t("error", lang, err=str(e)))
 
 
 @dp.message(F.text)
@@ -408,8 +667,9 @@ async def handle_text(message: Message):
 
 
 async def search_music(message: Message, query: str):
+    lang = await get_user_language(message.from_user.id)
     await increment_requests(message.from_user.id)
-    processing_msg = await message.answer(f"🔍 *{query}* qidirilmoqda...")
+    processing_msg = await message.answer(t("searching_text", lang, q=query), parse_mode="Markdown")
     try:
         # ESKI KOD: AudD/findLyrics — bu qo'shiq MATNI bo'yicha qidiradi, nom bo'yicha emas.
         # Shu sabab natijalar so'ralgan nom bilan mos kelmasdi.
@@ -428,25 +688,27 @@ async def search_music(message: Message, query: str):
 
         songs = result.get("results", [])
         if songs:
-            response = "🎵 *Topilgan kuylar:*\n\n"
+            response = t("found_list_title", lang)
             for i, song in enumerate(songs, 1):
-                title = song.get("trackName", "Noma'lum")
-                artist = song.get("artistName", "Noma'lum")
+                title = escape_md(song.get("trackName", "Noma'lum"))
+                artist = escape_md(song.get("artistName", "Noma'lum"))
                 response += f"{i}. 🎤 *{artist}* — {title}\n"
             await message.answer(response, parse_mode="Markdown")
         else:
-            await message.answer("😕 Kuy topilmadi\n\n💡 Ovoz xabar yuboring!")
+            await message.answer(t("not_found_text", lang))
     except Exception as e:
         try:
             await processing_msg.delete()
         except:
             pass
-        await message.answer(f"❌ Xatolik: {str(e)}")
+        print(f"[search_music xato]: {e}")
+        await message.answer(t("error", lang, err=str(e)))
 
 
 async def download_video(message: Message, url: str):
+    lang = await get_user_language(message.from_user.id)
     await increment_requests(message.from_user.id)
-    processing_msg = await message.answer("⬇️ Video yuklanmoqda... biroz kuting!")
+    processing_msg = await message.answer(t("video_downloading", lang))
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -479,33 +741,33 @@ async def download_video(message: Message, url: str):
                     await processing_msg.delete()
                     if os.path.getsize(video_file) < 50 * 1024 * 1024:
                         input_file = FSInputFile(video_file)
-                        await message.answer_video(input_file, caption="✅ Mana videongiz! 🎬")
+                        await message.answer_video(input_file, caption=t("video_ok_caption", lang))
                     else:
-                        await message.answer("😕 Video hajmi juda katta!")
+                        await message.answer(t("video_too_big", lang))
                 else:
                     await processing_msg.delete()
-                    await message.answer("😕 Video yuklab olinmadi!")
+                    await message.answer(t("video_fail", lang))
             else:
                 await processing_msg.delete()
                 error = stderr.decode()
                 print(f"[yt-dlp xato]: {error}")  # Railway Deploy Logs'da ko'rish uchun
                 if "Private" in error or "Login" in error:
-                    await message.answer("🔒 Bu post private! Faqat ochiq postlarni yuklab olish mumkin.")
+                    await message.answer(t("video_private", lang))
                 else:
-                    await message.answer("😕 Video yuklab olinmadi!\n\n• Havola to'g'ri ekanligini tekshiring\n• Post public bo'lishi kerak")
+                    await message.answer(t("video_fail_hint", lang))
     except asyncio.TimeoutError:
         try:
             await processing_msg.delete()
         except:
             pass
-        await message.answer("⏰ Vaqt tugadi! Video juda katta.")
+        await message.answer(t("video_timeout", lang))
     except Exception as e:
         try:
             await processing_msg.delete()
         except:
             pass
         print(f"[download_video xato]: {e}")  # Railway Deploy Logs'da ko'rish uchun
-        await message.answer("😕 Xatolik yuz berdi!\n\n• Havola to'g'ri ekanligini tekshiring")
+        await message.answer(t("video_fail_hint", lang))
 
 
 async def main():
