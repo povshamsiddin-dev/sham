@@ -633,19 +633,21 @@ async def search_music(message: Message, query: str):
 
         if result.get("status") == "success" and result.get("result"):
             songs = result["result"][:3]
-            response = "🎵 *Topilgan kuylar:*\n\n"
+            response = "🎵 <b>Topilgan kuylar:</b>\n\n"
             builder = InlineKeyboardBuilder()
             for i, song in enumerate(songs, 1):
                 title = song.get("title", "Noma'lum")
                 artist = song.get("artist", "Noma'lum")
-                response += f"{i}. 🎤 *{artist}* — {title}\n"
+                safe_title = title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                safe_artist = artist.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                response += f"{i}. 🎤 <b>{safe_artist}</b> — {safe_title}\n"
                 builder.row(
                     InlineKeyboardButton(
                         text=f"🎵 {i}. {artist} - {title}",
                         callback_data=f"dl_mp3:{title}:{artist}"
                     )
                 )
-            await message.answer(response, parse_mode="Markdown", reply_markup=builder.as_markup())
+            await message.answer(response, parse_mode="HTML", reply_markup=builder.as_markup())
         else:
             await message.answer("😕 Kuy topilmadi\n\n💡 Ovoz xabar yuboring!")
     except Exception as e:
