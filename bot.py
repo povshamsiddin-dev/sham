@@ -663,22 +663,15 @@ async def download_video(message: Message, url: str):
 
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Video va thumbnail alohida yuklanadi
             video_output = os.path.join(tmpdir, "video.%(ext)s")
-            thumb_output = os.path.join(tmpdir, "thumb.jpg")
 
             cmd = [
                 "yt-dlp",
                 "--no-playlist",
-                "-f", "bestvideo[ext=mp4][filesize<45M]+bestaudio[ext=m4a]/best[ext=mp4][filesize<45M]/best[filesize<45M]/best",
-                "--merge-output-format", "mp4",
-                "--max-filesize", "49m",
-                "--write-thumbnail",
-                "--convert-thumbnails", "jpg",
+                "-f", "best[filesize<50M]/best",
+                "--max-filesize", "50m",
                 "-o", video_output,
                 "--no-warnings",
-                "--no-check-certificates",
-                "--extractor-args", "instagram:include_dash_manifest=0",
                 url
             ]
 
@@ -691,21 +684,17 @@ async def download_video(message: Message, url: str):
 
             if process.returncode == 0:
                 video_file = None
-                thumb_file = None
 
                 for f in os.listdir(tmpdir):
-                    full_path = os.path.join(tmpdir, f)
-                    if f.startswith("video") and (f.endswith(".mp4") or f.endswith(".mkv") or f.endswith(".webm")):
-                        video_file = full_path
-                    elif f.endswith(".jpg") or f.endswith(".jpeg") or f.endswith(".webp"):
-                        thumb_file = full_path
+                    if f.startswith("video"):
+                        video_file = os.path.join(tmpdir, f)
+                        break
 
                 if video_file and os.path.exists(video_file):
                     file_size = os.path.getsize(video_file)
                     if file_size < 50 * 1024 * 1024:
                         await processing_msg.delete()
 
-                        # Builder: MP3 yuklab olish tugmasi
                         builder = InlineKeyboardBuilder()
                         builder.row(
                             InlineKeyboardButton(
@@ -714,16 +703,12 @@ async def download_video(message: Message, url: str):
                             )
                         )
 
-                        send_kwargs = {
-                            "caption": "✅ Mana videongiz! 🎬",
-                            "reply_markup": builder.as_markup()
-                        }
-
-                        if thumb_file and os.path.exists(thumb_file):
-                            send_kwargs["thumbnail"] = FSInputFile(thumb_file)
-
                         input_file = FSInputFile(video_file)
-                        await message.answer_video(input_file, **send_kwargs)
+                        await message.answer_video(
+                            input_file,
+                            caption="✅ Mana videongiz! 🎬",
+                            reply_markup=builder.as_markup()
+                        )
                         await send_ad_if_active(message)
                     else:
                         await processing_msg.delete()
