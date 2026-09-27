@@ -620,31 +620,38 @@ async def search_music(message: Message, query: str):
     await increment_requests(message.from_user.id)
     processing_msg = await message.answer(f"🔍 *{query}* qidirilmoqda...")
     try:
+        # AudD/findLyrics qo'shiq MATNI bo'yicha qidiradi, nom bo'yicha emas —
+        # shuning uchun nom bo'yicha qidiruv uchun iTunes Search API ishlatiladi
         async with aiohttp.ClientSession() as session:
-            data = {
-                "q": query,
-                "return": "apple_music,spotify",
-                "api_token": AUDD_API_KEY
+            params = {
+                "term": query,
+                "media": "music",
+                "entity": "song",
+                "limit": 3
             }
-            async with session.post("https://api.audd.io/findLyrics/", data=data) as resp:
+            async with session.get("https://itunes.apple.com/search", params=params) as resp:
                 result = await resp.json()
 
         await processing_msg.delete()
 
-        if result.get("status") == "success" and result.get("result"):
-            songs = result["result"][:3]
+        songs = result.get("results", [])
+        if songs:
             response = "🎵 <b>Topilgan kuylar:</b>\n\n"
             builder = InlineKeyboardBuilder()
             for i, song in enumerate(songs, 1):
-                title = song.get("title", "Noma'lum")
-                artist = song.get("artist", "Noma'lum")
+                title = song.get("trackName", "Noma'lum")
+                artist = song.get("artistName", "Noma'lum")
                 safe_title = title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 safe_artist = artist.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 response += f"{i}. 🎤 <b>{safe_artist}</b> — {safe_title}\n"
+                # callback_data Telegram limitida (64 bayt) qolishi uchun qisqartiriladi
+                cb = f"dl_mp3:{title}:{artist}"
+                if len(cb.encode()) > 64:
+                    cb = cb.encode()[:64].decode(errors="ignore")
                 builder.row(
                     InlineKeyboardButton(
                         text=f"🎵 {i}. {artist} - {title}",
-                        callback_data=f"dl_mp3:{title}:{artist}"
+                        callback_data=cb
                     )
                 )
             await message.answer(response, parse_mode="HTML", reply_markup=builder.as_markup())
