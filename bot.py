@@ -27,6 +27,7 @@ if DATABASE_URL.startswith("postgres://"):
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 db_pool = None
+LAST_SONGS = {}  # user_id -> [{"title": str, "artist": str}, ...] — "to'liq yuklab olish" tugmasi uchun
 
 
 # ===================== TILLAR (i18n) =====================
@@ -61,6 +62,10 @@ TEXTS = {
         "video_timeout": "⏰ Vaqt tugadi! Video juda katta.",
         "unsupported": "🤔 Bu turdagi faylni qo'llab-quvvatlamayman.\n\nMenga *ovoz xabar*, *audio*, *video* yoki *qo'shiq nomi* yuboring 🎵",
         "feedback_thanks": "Rahmat! 🙏",
+        "download_btn": "🎧 To'liq versiyani yuklab olish",
+        "audio_downloading": "🎧 To'liq qo'shiq yuklanmoqda... birozdan so'ng tayyor bo'ladi!",
+        "audio_fail": "😕 Qo'shiqni yuklab bo'lmadi. Boshqa nom bilan urinib ko'ring.",
+        "download_expired": "⌛ Vaqt tugagan, qaytadan qidiring yoki yuboring.",
     },
     "ru": {
         "welcome": "🎵 Добро пожаловать в *Kuy Navo Bot*, {name}!\n\n📤 *Что можно отправить:*\n• 🎤 Голосовое сообщение — распознает песню\n• 🎵 Аудиофайл — распознает песню\n• 🎬 Видео — распознает песню\n• 🔗 Ссылка Instagram/TikTok/YouTube — скачает видео\n• 🔍 Напишите название песни — найдёт её\n\nЯзык можно изменить командой /til.\n\nПопробуйте! 🚀",
@@ -92,6 +97,10 @@ TEXTS = {
         "video_timeout": "⏰ Время истекло! Видео слишком большое.",
         "unsupported": "🤔 Этот тип файла не поддерживается.\n\nОтправьте *голосовое сообщение*, *аудио*, *видео* или *название песни* 🎵",
         "feedback_thanks": "Спасибо! 🙏",
+        "download_btn": "🎧 Скачать полную версию",
+        "audio_downloading": "🎧 Загружаю полную песню... подождите немного!",
+        "audio_fail": "😕 Не удалось загрузить песню. Попробуйте другое название.",
+        "download_expired": "⌛ Время истекло, попробуйте снова.",
     },
     "en": {
         "welcome": "🎵 Welcome to *Kuy Navo Bot*, {name}!\n\n📤 *What you can send:*\n• 🎤 Voice message — recognizes the song\n• 🎵 Audio file — recognizes the song\n• 🎬 Video — recognizes the song\n• 🔗 Instagram/TikTok/YouTube link — downloads the video\n• 🔍 Type a song name — searches for it\n\nChange language anytime with /til.\n\nGive it a try! 🚀",
@@ -123,6 +132,10 @@ TEXTS = {
         "video_timeout": "⏰ Timed out! Video is too large.",
         "unsupported": "🤔 This file type isn't supported.\n\nSend me a *voice message*, *audio*, *video*, or a *song name* 🎵",
         "feedback_thanks": "Thanks! 🙏",
+        "download_btn": "🎧 Download full version",
+        "audio_downloading": "🎧 Downloading the full song... this will take a moment!",
+        "audio_fail": "😕 Couldn't download the song. Try a different name.",
+        "download_expired": "⌛ This expired, please search again.",
     },
 }
 
@@ -322,12 +335,14 @@ async def set_language_callback(callback: types.CallbackQuery):
 
 
 # ===================== BAHOLASH (like/dislike) =====================
-def rating_keyboard():
+def rating_keyboard(lang: str = "uz", download_index: int | None = None):
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="👍", callback_data="fb_like"),
         InlineKeyboardButton(text="👎", callback_data="fb_dislike"),
     )
+    if download_index is not None:
+        builder.row(InlineKeyboardButton(text=t("download_btn", lang), callback_data=f"dl_{download_index}"))
     return builder.as_markup()
 
 
@@ -341,6 +356,86 @@ async def feedback_callback(callback: types.CallbackQuery):
         await callback.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
+
+
+# ===================== TO'LIQ QO'SHIQNI YUKLAB OLISH =====================
+def download_list_keyboard(count: int):
+    builder = InlineKeyboardBuilder()
+    buttons = [InlineKeyboardButton(text=f"🎧 {i}", callback_data=f"dl_{i}") for i in range(1, count + 1)]
+    builder.row(*buttons)
+    return builder.as_markup()
+
+
+async def fetch_full_song(query: str, tmpdir: str) -> str | None:
+    """yt-dlp orqali qo'shiqning to'liq audio versiyasini qidirib, mp3 sifatida yuklab beradi."""
+    output_path = os.path.join(tmpdir, "song.%(ext)s")
+    cmd = [
+        "yt-dlp",
+        "--no-playlist",
+        "-x", "--audio-format", "mp3", "--audio-quality", "0",
+        "--max-filesize", "50m",
+        "-o", output_path,
+        "--no-warnings",
+        f"ytsearch1:{query} audio"
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+    except asyncio.TimeoutError:
+        return None
+
+    if process.returncode != 0:
+        print(f"[fetch_full_song xato]: {stderr.decode()}")
+        return None
+
+    for f in os.listdir(tmpdir):
+        if f.startswith("song"):
+            return os.path.join(tmpdir, f)
+    return None
+
+
+@dp.callback_query(F.data.startswith("dl_"))
+async def download_song_callback(callback: types.CallbackQuery):
+    lang = await get_user_language(callback.from_user.id)
+    try:
+        index = int(callback.data.split("_")[1]) - 1
+    except (IndexError, ValueError):
+        await callback.answer()
+        return
+
+    songs = LAST_SONGS.get(callback.from_user.id)
+    if not songs or index < 0 or index >= len(songs):
+        await callback.answer(t("download_expired", lang), show_alert=True)
+        return
+
+    song = songs[index]
+    await callback.answer()
+    status_msg = await callback.message.answer(t("audio_downloading", lang))
+
+    query = f"{song['artist']} {song['title']}"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        audio_path = await fetch_full_song(query, tmpdir)
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+
+        if audio_path and os.path.exists(audio_path):
+            try:
+                await callback.message.answer_audio(
+                    FSInputFile(audio_path),
+                    title=song["title"],
+                    performer=song["artist"]
+                )
+            except Exception as e:
+                print(f"[download_song_callback yuborish xato]: {e}")
+                await callback.message.answer(t("audio_fail", lang))
+        else:
+            await callback.message.answer(t("audio_fail", lang))
 
 
 # ===================== ADMIN PANEL =====================
@@ -405,7 +500,8 @@ async def show_users(callback: types.CallbackQuery):
     text = "👥 *Top 10 foydalanuvchilar:*\n\n"
     for i, u in enumerate(users, 1):
         status = "🚫" if u['is_blocked'] else "✅"
-        username = f"@{u['username']}" if u['username'] else u['full_name']
+        raw_name = f"@{u['username']}" if u['username'] else (u['full_name'] or "Noma'lum")
+        username = escape_md(raw_name)
         text += f"{i}. {status} {username} — {u['requests_count']} so'rov\n"
 
     builder = InlineKeyboardBuilder()
@@ -524,7 +620,7 @@ async def cmd_start(message: Message):
         return
     lang = await get_user_language(message.from_user.id)
     await message.answer(
-        t("welcome", lang, name=message.from_user.first_name),
+        t("welcome", lang, name=escape_md(message.from_user.first_name)),
         parse_mode="Markdown"
     )
 
@@ -586,10 +682,14 @@ async def recognize_music(message: Message, file_id: str):
 
         if result.get("status") == "success" and result.get("result"):
             song = result["result"]
-            title = escape_md(song.get("title", "Noma'lum"))
-            artist = escape_md(song.get("artist", "Noma'lum"))
+            raw_title = song.get("title", "Noma'lum")
+            raw_artist = song.get("artist", "Noma'lum")
+            title = escape_md(raw_title)
+            artist = escape_md(raw_artist)
             album = escape_md(song.get("album", "Noma'lum"))
             release_date = song.get("release_date", "Noma'lum")
+
+            LAST_SONGS[message.from_user.id] = [{"title": raw_title, "artist": raw_artist}]
 
             spotify_link = ""
             if song.get("spotify"):
@@ -611,7 +711,7 @@ async def recognize_music(message: Message, file_id: str):
                 f"📅 *{t('label_release', lang)}:* {release_date}"
                 f"{spotify_link}{apple_link}"
             )
-            await message.answer(text, parse_mode="Markdown", reply_markup=rating_keyboard())
+            await message.answer(text, parse_mode="Markdown", reply_markup=rating_keyboard(lang, download_index=1))
         else:
             await message.answer(t("not_found_voice", lang))
     except Exception as e:
@@ -682,18 +782,25 @@ async def search_music(message: Message, query: str):
                 "limit": 3
             }
             async with session.get("https://itunes.apple.com/search", params=params) as resp:
-                result = await resp.json()
+                # iTunes "application/json" o'rniga "text/javascript" mimetype qaytaradi —
+                # shu sabab resp.json() strict tekshiruvda xato berardi.
+                result = await resp.json(content_type=None)
 
         await processing_msg.delete()
 
         songs = result.get("results", [])
         if songs:
             response = t("found_list_title", lang)
+            songs_store = []
             for i, song in enumerate(songs, 1):
-                title = escape_md(song.get("trackName", "Noma'lum"))
-                artist = escape_md(song.get("artistName", "Noma'lum"))
+                raw_title = song.get("trackName", "Noma'lum")
+                raw_artist = song.get("artistName", "Noma'lum")
+                songs_store.append({"title": raw_title, "artist": raw_artist})
+                title = escape_md(raw_title)
+                artist = escape_md(raw_artist)
                 response += f"{i}. 🎤 *{artist}* — {title}\n"
-            await message.answer(response, parse_mode="Markdown")
+            LAST_SONGS[message.from_user.id] = songs_store
+            await message.answer(response, parse_mode="Markdown", reply_markup=download_list_keyboard(len(songs_store)))
         else:
             await message.answer(t("not_found_text", lang))
     except Exception as e:
