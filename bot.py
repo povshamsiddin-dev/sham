@@ -208,16 +208,18 @@ async def show_users(callback: types.CallbackQuery):
     if not users:
         text = "👥 Hali foydalanuvchilar yo'q."
     else:
-        text = "👥 *Top 20 foydalanuvchilar:*\n\n"
+        text = "👥 <b>Top 20 foydalanuvchilar:</b>\n\n"
         for i, u in enumerate(users, 1):
             status = "🚫" if u['is_blocked'] else "✅"
             username = f"@{u['username']}" if u['username'] else (u['full_name'] or "Noma'lum")
-            text += f"{i}. {status} `{u['user_id']}` {username} — {u['requests_count']} so'rov\n"
+            # HTML escape qilish — username'dagi & < > belgilari xato chiqmasin
+            username = username.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            text += f"{i}. {status} <code>{u['user_id']}</code> {username} — {u['requests_count']} so'rov\n"
 
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="🔙 Orqaga", callback_data="admin_back"))
 
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=builder.as_markup())
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=builder.as_markup())
     await callback.answer()
 
 
@@ -266,8 +268,8 @@ async def manage_ads(callback: types.CallbackQuery, state: FSMContext):
         builder.row(InlineKeyboardButton(text="❌ Reklamani o'chirish", callback_data="ad_disable"))
     builder.row(InlineKeyboardButton(text="🔙 Orqaga", callback_data="admin_back"))
 
-    ad_text = f"📣 *Joriy reklama:*\n\n{ad}" if ad else "📣 Hozir faol reklama yo'q."
-    await callback.message.edit_text(ad_text, parse_mode="Markdown", reply_markup=builder.as_markup())
+    ad_text = f"📣 <b>Joriy reklama:</b>\n\n{ad}" if ad else "📣 Hozir faol reklama yo'q."
+    await callback.message.edit_text(ad_text, parse_mode="HTML", reply_markup=builder.as_markup())
     await callback.answer()
 
 
@@ -348,8 +350,8 @@ async def handle_ad_text(message: Message, state: FSMContext):
     await state.clear()
     await set_ad(message.text)
     await message.answer(
-        f"✅ Reklama saqlandi!\n\n📣 *Reklama matni:*\n{message.text}",
-        parse_mode="Markdown",
+        f"✅ Reklama saqlandi!\n\n📣 <b>Reklama matni:</b>\n{message.text}",
+        parse_mode="HTML",
         reply_markup=admin_keyboard()
     )
 
@@ -409,7 +411,7 @@ async def send_ad_if_active(message: Message):
     """Agar faol reklama bo'lsa, yuborish"""
     ad = await get_active_ad()
     if ad:
-        await message.answer(f"📣 *Reklama:*\n\n{ad}", parse_mode="Markdown")
+        await message.answer(f"📣 <b>Reklama:</b>\n\n{ad}", parse_mode="HTML")
 
 
 # ===================== START =====================
